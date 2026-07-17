@@ -1,0 +1,28 @@
+﻿# Énoncés / documents PDF (version Markdown versionnée à la place)
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Environnement / IDE
+.env
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Artefacts d'extraction temporaires
+_extracted.txt
