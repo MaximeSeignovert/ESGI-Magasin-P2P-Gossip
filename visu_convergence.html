@@ -1,0 +1,685 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gossip · Convergence</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Fraunces', 'Georgia', 'serif'],
+            mono: ['IBM Plex Mono', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            ink: { 950: '#0a1210', 900: '#0f1c18', 800: '#162821', 700: '#1e342b' },
+            signal: { DEFAULT: '#3ecf8e', dim: '#1f6b4a', glow: '#7dffb3' },
+            pulse: { DEFAULT: '#e8a838', soft: '#f0c56d' },
+            mist: '#9bb5a8',
+          },
+          boxShadow: {
+            signal: '0 0 24px rgba(62, 207, 142, 0.45)',
+            pulse: '0 0 18px rgba(232, 168, 56, 0.5)',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    :root {
+      --ink: #0a1210;
+      --grid: rgba(62, 207, 142, 0.06);
+    }
+    body {
+      background:
+        radial-gradient(ellipse 80% 60% at 50% -10%, rgba(62, 207, 142, 0.12), transparent 55%),
+        radial-gradient(ellipse 50% 40% at 100% 100%, rgba(232, 168, 56, 0.08), transparent 50%),
+        var(--ink);
+    }
+    .mesh {
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: radial-gradient(ellipse 70% 70% at 50% 45%, black 20%, transparent 75%);
+    }
+    .node-core {
+      transition: fill 0.35s ease, filter 0.35s ease, r 0.25s ease;
+    }
+    .node-ring {
+      transition: stroke 0.35s ease, opacity 0.35s ease;
+    }
+    .arc-line {
+      stroke-dasharray: 6 10;
+      animation: dash 0.8s linear infinite;
+    }
+    @keyframes dash {
+      to { stroke-dashoffset: -32; }
+    }
+    @keyframes rip {
+      0% { r: 18; opacity: 0.55; }
+      100% { r: 42; opacity: 0; }
+    }
+    .ripple {
+      fill: none;
+      stroke: #3ecf8e;
+      stroke-width: 1.5;
+      animation: rip 0.9s ease-out forwards;
+      pointer-events: none;
+    }
+    #log::-webkit-scrollbar { width: 6px; }
+    #log::-webkit-scrollbar-thumb { background: #1e342b; border-radius: 4px; }
+    .fade-in {
+      animation: fadeIn 0.5s ease both;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body class="min-h-screen text-mist font-mono antialiased">
+  <div class="mesh fixed inset-0 pointer-events-none"></div>
+
+  <div class="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <header class="fade-in mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p class="text-xs uppercase tracking-[0.28em] text-signal/70">Phase 2 · Gossip</p>
+        <h1 class="mt-2 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl">
+          Convergence
+        </h1>
+        <p class="mt-2 max-w-xl text-sm leading-relaxed text-mist/80">
+          Un nœud reçoit la clé. Chaque tour, un pair au hasard échange son état (push-pull).
+          La connaissance se propage en ~log₂(N) tours.
+        </p>
+      </div>
+      <div class="flex flex-col items-start gap-2">
+        <div id="status-pill" class="inline-flex items-center gap-2 self-start rounded-full border border-ink-700 bg-ink-900/80 px-3 py-1.5 text-xs text-mist/70">
+          <span class="h-2 w-2 rounded-full bg-mist/40" id="status-dot"></span>
+          <span id="status-text">déconnecté</span>
+        </div>
+        <div id="boot-error" class="hidden max-w-md rounded-xl border border-pulse/40 bg-pulse/10 px-3 py-2 text-xs leading-relaxed text-pulse-soft"></div>
+      </div>
+    </header>
+
+    <div class="grid gap-6 lg:grid-cols-[320px_1fr_300px]">
+      <!-- Contrôles -->
+      <aside class="fade-in space-y-4 rounded-2xl border border-ink-700/80 bg-ink-900/60 p-5 backdrop-blur" style="animation-delay:0.05s">
+        <h2 class="font-display text-lg text-white">Cluster</h2>
+
+        <label class="block text-xs uppercase tracking-wider text-mist/60">
+          Nœuds N
+          <input id="n" type="number" min="2" max="100" step="1" value="8"
+            class="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white outline-none focus:border-signal/50" />
+          <span class="mt-1 block text-[10px] text-mist/40">2 – 100</span>
+        </label>
+
+        <label class="block text-xs uppercase tracking-wider text-mist/60">
+          Intervalle T (s)
+          <input id="interval" type="number" min="0.05" max="5" step="0.05" value="0.45"
+            class="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white outline-none focus:border-pulse/50" />
+          <span class="mt-1 block text-[10px] text-mist/40">0.05 – 5 s entre chaque push-pull</span>
+        </label>
+
+        <label class="block text-xs uppercase tracking-wider text-mist/60">
+          Source du put
+          <select id="source" class="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white outline-none focus:border-signal/50"></select>
+        </label>
+
+        <div class="flex flex-col gap-2 pt-2">
+          <button id="btn-start" class="rounded-xl bg-signal px-4 py-2.5 text-sm font-semibold text-ink-950 transition hover:bg-signal-glow active:scale-[0.98]">
+            Démarrer le cluster
+          </button>
+          <button id="btn-put" disabled class="rounded-xl border border-pulse/40 bg-pulse/10 px-4 py-2.5 text-sm font-semibold text-pulse transition hover:bg-pulse/20 disabled:cursor-not-allowed disabled:opacity-35 active:scale-[0.98]">
+            Injecter la clé « seed »
+          </button>
+          <button id="btn-stop" disabled class="rounded-xl border border-ink-700 px-4 py-2.5 text-sm text-mist/70 transition hover:border-mist/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-35">
+            Arrêter
+          </button>
+        </div>
+
+        <p class="text-[11px] leading-relaxed text-mist/45">
+          Vert = possède la clé · Ambre = échange gossip en cours ·
+          Cercle vide = encore ignorant.
+        </p>
+      </aside>
+
+      <!-- Scène -->
+      <section class="fade-in relative min-h-[420px] overflow-hidden rounded-2xl border border-ink-700/80 bg-ink-900/40 backdrop-blur" style="animation-delay:0.1s">
+        <div class="absolute left-4 top-4 z-10 rounded-lg border border-ink-700/60 bg-ink-950/70 px-3 py-2 text-[11px] uppercase tracking-wider text-mist/50">
+          Topologie mesh · pair aléatoire
+        </div>
+        <svg id="scene" viewBox="0 0 640 520" class="h-full w-full min-h-[420px]" role="img" aria-label="Graphe des nœuds gossip">
+          <defs>
+            <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="4" result="b" />
+              <feMerge>
+                <feMergeNode in="b" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <g id="arcs"></g>
+          <g id="ripples"></g>
+          <g id="nodes"></g>
+        </svg>
+        <div id="banner" class="pointer-events-none absolute inset-x-0 bottom-0 translate-y-full bg-gradient-to-t from-signal/20 to-transparent px-6 py-8 text-center transition-transform duration-500">
+          <p class="font-display text-2xl text-signal-glow">Convergence atteinte</p>
+          <p id="banner-detail" class="mt-1 text-sm text-mist/80"></p>
+        </div>
+      </section>
+
+      <!-- Stats + journal -->
+      <aside class="fade-in flex flex-col gap-4" style="animation-delay:0.15s">
+        <div class="grid grid-cols-2 gap-3">
+          <div class="rounded-xl border border-ink-700/80 bg-ink-900/60 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-mist/45">Informés</p>
+            <p class="mt-1 font-display text-2xl text-white"><span id="stat-infected">0</span><span class="text-mist/40 text-lg">/<span id="stat-n">0</span></span></p>
+          </div>
+          <div class="rounded-xl border border-ink-700/80 bg-ink-900/60 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-mist/45">Temps</p>
+            <p class="mt-1 font-display text-2xl text-white"><span id="stat-elapsed">—</span><span class="text-sm text-mist/40"> s</span></p>
+          </div>
+          <div class="rounded-xl border border-ink-700/80 bg-ink-900/60 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-mist/45">Tours / T</p>
+            <p class="mt-1 font-display text-2xl text-pulse" id="stat-tours">—</p>
+          </div>
+          <div class="rounded-xl border border-ink-700/80 bg-ink-900/60 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-mist/45">≈ log₂(N)</p>
+            <p class="mt-1 font-display text-2xl text-signal" id="stat-theo">—</p>
+          </div>
+        </div>
+
+        <div class="flex min-h-0 flex-1 flex-col rounded-2xl border border-ink-700/80 bg-ink-900/60 p-4">
+          <h2 class="mb-2 font-display text-lg text-white">Journal</h2>
+          <div id="log" class="max-h-[280px] flex-1 space-y-1.5 overflow-y-auto text-[11px] leading-snug"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const nInput = $('n');
+    const intervalInput = $('interval');
+    const sourceSelect = $('source');
+    const btnStart = $('btn-start');
+    const btnPut = $('btn-put');
+    const btnStop = $('btn-stop');
+
+    let state = { n: 0, infected: [], running: false, put_at: null, converged_at: null, interval: 0.45 };
+    let positions = [];
+    let elapsedTimer = null;
+    const recentArcs = new Map();
+
+    function clampInputs() {
+      let n = parseInt(nInput.value, 10);
+      if (Number.isNaN(n)) n = 8;
+      n = Math.min(100, Math.max(2, n));
+      nInput.value = String(n);
+
+      let t = parseFloat(intervalInput.value);
+      if (Number.isNaN(t)) t = 0.45;
+      t = Math.min(5, Math.max(0.05, t));
+      intervalInput.value = String(t);
+
+      fillSources(n);
+      return { n, t };
+    }
+
+    function fillSources(n) {
+      const cur = sourceSelect.value;
+      sourceSelect.innerHTML = '';
+      for (let i = 0; i < n; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `N${i}`;
+        sourceSelect.appendChild(opt);
+      }
+      if (cur !== '' && +cur < n) sourceSelect.value = cur;
+    }
+
+    nInput.addEventListener('change', clampInputs);
+    intervalInput.addEventListener('change', clampInputs);
+    clampInputs();
+
+    function setConnected(ok) {
+      $('status-dot').className = `h-2 w-2 rounded-full ${ok ? 'bg-signal shadow-signal animate-pulse' : 'bg-mist/40'}`;
+      $('status-text').textContent = ok ? 'flux temps réel' : 'déconnecté';
+    }
+
+    function layout(n) {
+      const cx = 320, cy = 260;
+      // Rayon adapté pour éviter le chevauchement jusqu'à N=100
+      const coreR = n > 48 ? 4 : n > 24 ? 6 : 11;
+      const r = Math.min(230, Math.max(90, (n * (coreR * 2 + 4)) / (2 * Math.PI)));
+      positions = [];
+      for (let i = 0; i < n; i++) {
+        const a = -Math.PI / 2 + (2 * Math.PI * i) / n;
+        positions.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), coreR });
+      }
+    }
+
+    function renderNodes() {
+      const g = $('nodes');
+      g.innerHTML = '';
+      const infected = new Set(state.infected || []);
+      const n = state.n || 0;
+      const showLabels = n <= 36;
+      for (let i = 0; i < n; i++) {
+        const p = positions[i];
+        if (!p) continue;
+        const has = infected.has(i);
+        const isSource = state.source === i && state.put_at;
+        const coreR = p.coreR || 11;
+        const ringR = coreR + (n > 48 ? 2 : 8);
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('transform', `translate(${p.x},${p.y})`);
+
+        const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        ring.setAttribute('r', String(ringR));
+        ring.setAttribute('class', 'node-ring');
+        ring.setAttribute('fill', 'none');
+        ring.setAttribute('stroke', has ? '#3ecf8e' : '#1e342b');
+        ring.setAttribute('stroke-width', has ? '2' : '1.5');
+        ring.setAttribute('opacity', has ? '0.9' : '0.7');
+        if (has && n <= 48) ring.setAttribute('filter', 'url(#glow)');
+
+        const core = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        core.setAttribute('r', String(has ? coreR + 1 : coreR));
+        core.setAttribute('class', 'node-core');
+        core.setAttribute('fill', has ? '#3ecf8e' : '#162821');
+        core.setAttribute('stroke', has ? '#7dffb3' : '#2a4638');
+        core.setAttribute('stroke-width', n > 48 ? '1' : '1.5');
+        if (has && n <= 48) core.setAttribute('filter', 'url(#glow)');
+
+        if (isSource) {
+          const mark = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          mark.setAttribute('r', String(ringR + 6));
+          mark.setAttribute('fill', 'none');
+          mark.setAttribute('stroke', '#e8a838');
+          mark.setAttribute('stroke-width', '1.5');
+          mark.setAttribute('stroke-dasharray', '3 4');
+          mark.setAttribute('opacity', '0.85');
+          group.appendChild(mark);
+        }
+
+        group.appendChild(ring);
+        group.appendChild(core);
+
+        if (showLabels) {
+          const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          label.setAttribute('text-anchor', 'middle');
+          label.setAttribute('dominant-baseline', 'central');
+          label.setAttribute('fill', has ? '#0a1210' : '#9bb5a8');
+          label.setAttribute('font-size', n > 24 ? '8' : '10');
+          label.setAttribute('font-family', 'IBM Plex Mono, monospace');
+          label.setAttribute('font-weight', '600');
+          label.textContent = `N${i}`;
+          group.appendChild(label);
+        }
+        g.appendChild(group);
+      }
+    }
+
+    function flashArc(from, to, useful) {
+      const a = positions[from], b = positions[to];
+      if (!a || !b) return;
+      const key = `${from}-${to}-${Date.now()}`;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', a.x);
+      line.setAttribute('y1', a.y);
+      line.setAttribute('x2', b.x);
+      line.setAttribute('y2', b.y);
+      line.setAttribute('class', 'arc-line');
+      line.setAttribute('stroke', useful ? '#e8a838' : '#3ecf8e55');
+      line.setAttribute('stroke-width', useful ? '2.2' : '1.2');
+      line.setAttribute('opacity', '0.95');
+      $('arcs').appendChild(line);
+
+      const tip = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      tip.setAttribute('cx', b.x);
+      tip.setAttribute('cy', b.y);
+      tip.setAttribute('r', '4');
+      tip.setAttribute('fill', useful ? '#e8a838' : '#3ecf8e');
+      tip.setAttribute('opacity', '0.9');
+      $('arcs').appendChild(tip);
+
+      setTimeout(() => {
+        line.remove();
+        tip.remove();
+      }, 700);
+
+      // ripple on receiver if useful
+      if (useful) {
+        const rip = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        rip.setAttribute('cx', b.x);
+        rip.setAttribute('cy', b.y);
+        rip.setAttribute('class', 'ripple');
+        rip.setAttribute('r', '18');
+        $('ripples').appendChild(rip);
+        setTimeout(() => rip.remove(), 900);
+      }
+    }
+
+    function logLine(html, cls = '') {
+      const row = document.createElement('div');
+      row.className = `rounded-md px-2 py-1 ${cls || 'bg-ink-950/40 text-mist/70'}`;
+      row.innerHTML = html;
+      const box = $('log');
+      box.prepend(row);
+      while (box.children.length > 80) box.lastChild.remove();
+    }
+
+    function updateStats(ev) {
+      const infected = ev.infected || state.infected || [];
+      const n = ev.n ?? state.n;
+      $('stat-infected').textContent = infected.length;
+      $('stat-n').textContent = n;
+      $('stat-theo').textContent = ev.theorique ?? (n > 1 ? Math.ceil(Math.log2(n)) : '—');
+
+      if (ev.put_at && !ev.converged_at) {
+        const t = (Date.now() / 1000) - (typeof ev.put_at === 'number' ? ev.put_at : state.put_at);
+        // put_at is python time.time() — sync via elapsed from server when available
+      }
+      if (ev.elapsed != null && ev.put_at) {
+        const elapsed = ev.converged_at ? ev.elapsed : ev.elapsed;
+        if (ev.converged_at) {
+          $('stat-elapsed').textContent = Number(ev.elapsed).toFixed(2);
+          $('stat-tours').textContent = (ev.elapsed / (ev.interval || state.interval)).toFixed(2);
+        }
+      }
+    }
+
+    function startElapsedClock() {
+      stopElapsedClock();
+      const putAt = state.put_at;
+      const interval = state.interval;
+      if (!putAt || state.converged_at) return;
+      const t0 = performance.now();
+      // Approximate: server put_at is absolute; we track from first put event locally
+      const localStart = state._localPut || performance.now();
+      elapsedTimer = setInterval(() => {
+        if (state.converged_at) {
+          stopElapsedClock();
+          return;
+        }
+        const elapsed = (performance.now() - localStart) / 1000;
+        $('stat-elapsed').textContent = elapsed.toFixed(2);
+        $('stat-tours').textContent = (elapsed / interval).toFixed(2);
+      }, 50);
+    }
+
+    function stopElapsedClock() {
+      if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+      }
+    }
+
+    function showBootError(msg) {
+      const el = $('boot-error');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+
+    function hideBootError() {
+      $('boot-error').classList.add('hidden');
+    }
+
+    function applyState(ev) {
+      if (!ev || typeof ev !== 'object') return;
+      const prevRunning = state.running;
+      state = { ...state, ...ev };
+
+      if (ev.n != null && ev.n > 0) {
+        if (positions.length !== ev.n) layout(ev.n);
+        fillSources(ev.n);
+      }
+
+      renderNodes();
+      $('stat-infected').textContent = (state.infected || []).length;
+      $('stat-n').textContent = state.n || 0;
+      if (state.theorique != null) $('stat-theo').textContent = state.theorique;
+
+      const running = !!state.running;
+      btnPut.disabled = !running;
+      btnStop.disabled = !running;
+      btnStart.disabled = running;
+
+      if (state.converged_at && state.elapsed != null) {
+        stopElapsedClock();
+        $('stat-elapsed').textContent = Number(state.elapsed).toFixed(2);
+        $('stat-tours').textContent = (state.elapsed / (state.interval || 1)).toFixed(2);
+        $('banner').classList.remove('translate-y-full');
+        $('banner-detail').textContent =
+          `${Number(state.elapsed).toFixed(2)}s · ~${(state.elapsed / (state.interval || 1)).toFixed(1)} tours · théorique log₂(N)=${state.theorique}`;
+      } else if (!state.converged_at) {
+        $('banner').classList.add('translate-y-full');
+      }
+
+      if (running && !prevRunning) {
+        $('stat-elapsed').textContent = '—';
+        $('stat-tours').textContent = '—';
+      }
+    }
+
+    function onEvent(ev) {
+      if (ev.type === 'started') {
+        logLine(`<span class="text-signal">cluster</span> N=${ev.n} · T=${ev.interval}s`, 'bg-signal/10 text-signal/90');
+        stopElapsedClock();
+        applyState({
+          n: ev.n,
+          interval: ev.interval,
+          running: true,
+          infected: [],
+          put_at: null,
+          converged_at: null,
+          source: null,
+          theorique: Math.ceil(Math.log2(ev.n)),
+          elapsed: null,
+        });
+        return;
+      }
+
+      if (ev.type === 'stopped') {
+        logLine(`<span class="text-mist/50">cluster arrêté</span>`);
+        stopElapsedClock();
+        applyState({ n: 0, infected: [], running: false, put_at: null, converged_at: null, source: null });
+        layout(8);
+        renderNodes();
+        return;
+      }
+
+      if (ev.type === 'state') {
+        applyState(ev);
+        return;
+      }
+
+      if (ev.type === 'put') {
+        state.put_at = ev.ts;
+        state.source = ev.source;
+        state.converged_at = null;
+        state._localPut = performance.now();
+        state.infected = [ev.source];
+        renderNodes();
+        $('stat-infected').textContent = 1;
+        logLine(
+          `<span class="text-pulse">put</span> seed sur <strong class="text-white">N${ev.source}</strong> = ${ev.value}`,
+          'bg-pulse/10 text-pulse-soft'
+        );
+        startElapsedClock();
+        $('banner').classList.add('translate-y-full');
+        return;
+      }
+
+      if (ev.type === 'gossip') {
+        const useful = (ev.maj_peer || 0) + (ev.maj_local || 0) > 0;
+        flashArc(ev.from, ev.to, useful);
+        if (ev.infected) {
+          state.infected = ev.infected;
+          renderNodes();
+          $('stat-infected').textContent = ev.infected.length;
+        }
+        if (useful) {
+          logLine(
+            `<span class="text-pulse">gossip</span> N${ev.from} → N${ev.to}` +
+            ` <span class="text-mist/40">tour ${ev.tour}</span>` +
+            (ev.maj_peer ? ` · +${ev.maj_peer} chez N${ev.to}` : '') +
+            (ev.maj_local ? ` · +${ev.maj_local} chez N${ev.from}` : '')
+          );
+        }
+        return;
+      }
+
+      if (ev.type === 'converged') {
+        state.converged_at = true;
+        stopElapsedClock();
+        $('stat-elapsed').textContent = Number(ev.elapsed).toFixed(2);
+        $('stat-tours').textContent = Number(ev.tours_estimes).toFixed(2);
+        $('stat-theo').textContent = ev.theorique;
+        $('banner').classList.remove('translate-y-full');
+        $('banner-detail').textContent =
+          `${Number(ev.elapsed).toFixed(2)}s · ~${Number(ev.tours_estimes).toFixed(1)} tours · théorique log₂(N)=${ev.theorique}`;
+        logLine(
+          `<span class="text-signal-glow">convergé</span> en ${Number(ev.elapsed).toFixed(2)}s` +
+          ` (~${Number(ev.tours_estimes).toFixed(1)} tours, log₂=${ev.theorique})`,
+          'bg-signal/15 text-signal'
+        );
+      }
+    }
+
+    async function post(url, body) {
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body || {}),
+        });
+      } catch (e) {
+        throw new Error(
+          'Serveur injoignable. Lance : python visu_convergence.py puis ouvre http://127.0.0.1:8765'
+        );
+      }
+      let data;
+      try {
+        data = await res.json();
+      } catch (_) {
+        throw new Error(`Réponse invalide (${res.status})`);
+      }
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    btnStart.addEventListener('click', async () => {
+      btnStart.disabled = true;
+      try {
+        hideBootError();
+        const { n, t } = clampInputs();
+        const data = await post('/api/start', { n, interval: t });
+        logLine(`<span class="text-signal">cluster</span> N=${n} · T=${t}s`, 'bg-signal/10 text-signal/90');
+        if (data.state) applyState(data.state);
+        else {
+          applyState({
+            n,
+            interval: t,
+            running: true,
+            infected: [],
+            put_at: null,
+            converged_at: null,
+            theorique: Math.ceil(Math.log2(n)),
+          });
+        }
+      } catch (e) {
+        btnStart.disabled = false;
+        showBootError(e.message);
+        logLine(`<span class="text-red-400">erreur</span> ${e.message}`, 'bg-red-500/10');
+      }
+    });
+
+    btnPut.addEventListener('click', async () => {
+      try {
+        const data = await post('/api/put', { source: +sourceSelect.value, value: 'hello' });
+        if (data.state) {
+          state._localPut = performance.now();
+          applyState(data.state);
+          startElapsedClock();
+        }
+        logLine(
+          `<span class="text-pulse">put</span> seed sur <strong class="text-white">N${sourceSelect.value}</strong>`,
+          'bg-pulse/10 text-pulse-soft'
+        );
+      } catch (e) {
+        showBootError(e.message);
+        logLine(`<span class="text-red-400">erreur</span> ${e.message}`, 'bg-red-500/10');
+      }
+    });
+
+    btnStop.addEventListener('click', async () => {
+      try {
+        const data = await post('/api/stop', {});
+        if (data.state) applyState(data.state);
+        else applyState({ n: 0, infected: [], running: false });
+        stopElapsedClock();
+        logLine(`<span class="text-mist/50">cluster arrêté</span>`);
+      } catch (e) {
+        showBootError(e.message);
+        logLine(`<span class="text-red-400">erreur</span> ${e.message}`, 'bg-red-500/10');
+      }
+    });
+
+    function connectSSE() {
+      if (location.protocol === 'file:') return;
+      const es = new EventSource('/events');
+      es.onopen = () => {
+        sseOk = true;
+        setConnected(true);
+        hideBootError();
+      };
+      es.onerror = () => {
+        sseOk = false;
+        setConnected(false);
+      };
+      es.onmessage = (msg) => {
+        sseOk = true;
+        try {
+          onEvent(JSON.parse(msg.data));
+        } catch (_) {}
+      };
+    }
+
+    // Fallback léger si le SSE est coupé
+    let sseOk = false;
+    setInterval(async () => {
+      if (location.protocol === 'file:' || sseOk) return;
+      try {
+        const res = await fetch('/api/state');
+        if (!res.ok) return;
+        const snap = await res.json();
+        applyState(snap);
+        setConnected(true);
+      } catch (_) {
+        setConnected(false);
+      }
+    }, 1500);
+
+    if (location.protocol === 'file:') {
+      showBootError(
+        'Cette page a été ouverte en fichier local. Lance python visu_convergence.py puis ouvre http://127.0.0.1:8765 (pas le .html directement).'
+      );
+      setConnected(false);
+    } else {
+      connectSSE();
+    }
+    layout(8);
+    state.n = 0;
+    renderNodes();
+  </script>
+</body>
+</html>

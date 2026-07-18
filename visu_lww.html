@@ -1,0 +1,648 @@
+﻿<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gossip · Horloges vectorielles</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Fraunces', 'Georgia', 'serif'],
+            mono: ['IBM Plex Mono', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            ink: { 950: '#0c0e14', 900: '#12151e', 800: '#1a1f2b', 700: '#252b3a' },
+            rouge: { DEFAULT: '#e85d5d', glow: '#ff8a8a', dim: '#8a3030' },
+            bleu: { DEFAULT: '#5b9fd4', glow: '#8ec4ef', dim: '#2a5575' },
+            pulse: { DEFAULT: '#e8a838', soft: '#f0c56d' },
+            mist: '#a8b0c0',
+          },
+          boxShadow: {
+            rouge: '0 0 22px rgba(232, 93, 93, 0.45)',
+            bleu: '0 0 22px rgba(91, 159, 212, 0.45)',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    :root { --ink: #0c0e14; --grid: rgba(168, 176, 192, 0.06); }
+    body {
+      background:
+        radial-gradient(ellipse 70% 50% at 15% 0%, rgba(232, 93, 93, 0.14), transparent 55%),
+        radial-gradient(ellipse 60% 45% at 90% 100%, rgba(91, 159, 212, 0.14), transparent 50%),
+        var(--ink);
+    }
+    .mesh {
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: radial-gradient(ellipse 70% 70% at 50% 45%, black 20%, transparent 75%);
+    }
+    .node-core, .node-ring { transition: fill 0.35s ease, stroke 0.35s ease, filter 0.35s ease, r 0.25s ease; }
+    .arc-line { stroke-dasharray: 6 10; animation: dash 0.8s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -32; } }
+    @keyframes rip {
+      0% { r: 18; opacity: 0.55; }
+      100% { r: 42; opacity: 0; }
+    }
+    .ripple { fill: none; stroke-width: 1.5; animation: rip 0.9s ease-out forwards; pointer-events: none; }
+    #log::-webkit-scrollbar { width: 6px; }
+    #log::-webkit-scrollbar-thumb { background: #252b3a; border-radius: 4px; }
+    .fade-in { animation: fadeIn 0.5s ease both; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body class="min-h-screen text-mist font-mono antialiased">
+  <div class="mesh fixed inset-0 pointer-events-none"></div>
+
+  <div class="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <header class="fade-in mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p class="text-xs uppercase tracking-[0.28em] text-pulse/70">Phase 3 · Horloges vectorielles</p>
+        <h1 class="mt-2 font-display text-4xl font-bold tracking-tight text-white sm:text-5xl">
+          Conflit détecté
+        </h1>
+        <p class="mt-2 max-w-xl text-sm leading-relaxed text-mist/80">
+          Deux nœuds écrivent <code class="text-pulse">couleur</code> =
+          <span class="text-rouge">rouge</span> / <span class="text-bleu">bleu</span>
+          avec des horloges incomparables. Le conflit est <em>détecté</em>, puis résolu
+          par le vecteur le plus grand (le gagnant absorbe l’horloge du perdant).
+        </p>
+      </div>
+      <div class="flex flex-col items-start gap-2">
+        <div id="status-pill" class="inline-flex items-center gap-2 self-start rounded-full border border-ink-700 bg-ink-900/80 px-3 py-1.5 text-xs text-mist/70">
+          <span class="h-2 w-2 rounded-full bg-mist/40" id="status-dot"></span>
+          <span id="status-text">déconnecté</span>
+        </div>
+        <div id="boot-error" class="hidden max-w-md rounded-xl border border-pulse/40 bg-pulse/10 px-3 py-2 text-xs leading-relaxed text-pulse-soft"></div>
+      </div>
+    </header>
+
+    <div class="grid gap-6 lg:grid-cols-[320px_1fr_300px]">
+      <aside class="fade-in space-y-4 rounded-2xl border border-ink-700/80 bg-ink-900/60 p-5 backdrop-blur" style="animation-delay:0.05s">
+        <h2 class="font-display text-lg text-white">Cluster</h2>
+
+        <label class="block text-xs uppercase tracking-wider text-mist/60">
+          Nœuds N
+          <input id="n" type="number" min="2" max="100" step="1" value="8"
+            class="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white outline-none focus:border-pulse/50" />
+          <span class="mt-1 block text-[10px] text-mist/40">2 – 100 · ids N0, N1…</span>
+        </label>
+
+        <label class="block text-xs uppercase tracking-wider text-mist/60">
+          Intervalle T (s)
+          <input id="interval" type="number" min="0.05" max="5" step="0.05" value="0.45"
+            class="mt-2 w-full rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 text-sm text-white outline-none focus:border-pulse/50" />
+          <span class="mt-1 block text-[10px] text-mist/40">0.05 – 5 s entre chaque push-pull</span>
+        </label>
+
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block text-xs uppercase tracking-wider text-rouge/80">
+            Source rouge
+            <select id="source-a" class="mt-2 w-full rounded-lg border border-rouge/30 bg-ink-950 px-2 py-2 text-sm text-white outline-none focus:border-rouge/60"></select>
+          </label>
+          <label class="block text-xs uppercase tracking-wider text-bleu/80">
+            Source bleu
+            <select id="source-b" class="mt-2 w-full rounded-lg border border-bleu/30 bg-ink-950 px-2 py-2 text-sm text-white outline-none focus:border-bleu/60"></select>
+          </label>
+        </div>
+
+        <div class="flex flex-col gap-2 pt-2">
+          <button id="btn-start" class="rounded-xl bg-white/90 px-4 py-2.5 text-sm font-semibold text-ink-950 transition hover:bg-white active:scale-[0.98]">
+            Démarrer le cluster
+          </button>
+          <button id="btn-conflict" disabled class="rounded-xl border border-pulse/40 bg-gradient-to-r from-rouge/20 to-bleu/20 px-4 py-2.5 text-sm font-semibold text-pulse transition hover:from-rouge/30 hover:to-bleu/30 disabled:cursor-not-allowed disabled:opacity-35 active:scale-[0.98]">
+            Provoquer le conflit
+          </button>
+          <button id="btn-stop" disabled class="rounded-xl border border-ink-700 px-4 py-2.5 text-sm text-mist/70 transition hover:border-mist/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-35">
+            Arrêter
+          </button>
+        </div>
+
+        <p class="text-[11px] leading-relaxed text-mist/45">
+          Puts concurrentes → VC <code>{N0:1}</code> vs <code>{N1:1}</code> (incomparables).
+          Résolution : plus grand vecteur + absorption. Contrairement à LWW, le conflit est loggé.
+        </p>
+      </aside>
+
+      <section class="fade-in relative min-h-[420px] overflow-hidden rounded-2xl border border-ink-700/80 bg-ink-900/40 backdrop-blur" style="animation-delay:0.1s">
+        <div class="absolute left-4 top-4 z-10 flex flex-wrap gap-2">
+          <div class="rounded-lg border border-ink-700/60 bg-ink-950/70 px-3 py-2 text-[11px] uppercase tracking-wider text-mist/50">
+            Vector clocks · gossip
+          </div>
+          <div class="flex items-center gap-3 rounded-lg border border-ink-700/60 bg-ink-950/70 px-3 py-2 text-[11px]">
+            <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-rouge shadow-rouge"></span>rouge</span>
+            <span class="inline-flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-bleu shadow-bleu"></span>bleu</span>
+          </div>
+        </div>
+        <svg id="scene" viewBox="0 0 640 520" class="h-full w-full min-h-[420px]" role="img" aria-label="Graphe VC">
+          <defs>
+            <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="4" result="b" />
+              <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          <g id="arcs"></g>
+          <g id="ripples"></g>
+          <g id="nodes"></g>
+        </svg>
+        <div id="banner" class="pointer-events-none absolute inset-x-0 bottom-0 translate-y-full bg-gradient-to-t from-ink-950/90 to-transparent px-6 py-8 text-center transition-transform duration-500">
+          <p class="font-display text-2xl text-white">Convergence (vecteur max)</p>
+          <p id="banner-detail" class="mt-1 text-sm text-mist/80"></p>
+        </div>
+      </section>
+
+      <aside class="fade-in flex flex-col gap-4" style="animation-delay:0.15s">
+        <div class="grid grid-cols-2 gap-3">
+          <div class="rounded-xl border border-rouge/30 bg-rouge/10 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-rouge/70">Rouge</p>
+            <p class="mt-1 font-display text-2xl text-rouge" id="stat-rouge">0</p>
+          </div>
+          <div class="rounded-xl border border-bleu/30 bg-bleu/10 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-bleu/70">Bleu</p>
+            <p class="mt-1 font-display text-2xl text-bleu" id="stat-bleu">0</p>
+          </div>
+          <div class="rounded-xl border border-ink-700/80 bg-ink-900/60 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-mist/45">Relation VC</p>
+            <p class="mt-1 font-display text-lg text-pulse" id="stat-relation">—</p>
+          </div>
+          <div class="rounded-xl border border-ink-700/80 bg-ink-900/60 p-4">
+            <p class="text-[10px] uppercase tracking-wider text-mist/45">Attendu</p>
+            <p class="mt-1 font-display text-xl" id="stat-attendu">—</p>
+          </div>
+          <div class="rounded-xl border border-ink-700/80 bg-ink-900/60 p-4 col-span-2">
+            <p class="text-[10px] uppercase tracking-wider text-mist/45">Temps · conflits détectés</p>
+            <p class="mt-1 font-display text-xl text-white">
+              <span id="stat-elapsed">—</span><span class="text-sm text-mist/40"> s</span>
+              <span class="mx-2 text-mist/30">·</span>
+              <span id="stat-conflits" class="text-pulse">0</span>
+            </p>
+          </div>
+        </div>
+
+        <div class="flex min-h-0 flex-1 flex-col rounded-2xl border border-ink-700/80 bg-ink-900/60 p-4">
+          <h2 class="mb-2 font-display text-lg text-white">Journal</h2>
+          <div id="log" class="max-h-[280px] flex-1 space-y-1.5 overflow-y-auto text-[11px] leading-snug"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const COLORS = {
+      rouge: { fill: '#e85d5d', stroke: '#ff8a8a', arc: '#e85d5d' },
+      bleu: { fill: '#5b9fd4', stroke: '#8ec4ef', arc: '#5b9fd4' },
+      none: { fill: '#1a1f2b', stroke: '#252b3a', arc: '#e8a838' },
+    };
+
+    const nInput = $('n');
+    const intervalInput = $('interval');
+    const sourceA = $('source-a');
+    const sourceB = $('source-b');
+    const btnStart = $('btn-start');
+    const btnConflict = $('btn-conflict');
+    const btnStop = $('btn-stop');
+
+    let state = { n: 0, ids: [], valeurs: [], vcs: [], running: false, conflict_at: null, converged_at: null, interval: 0.45 };
+    let positions = [];
+    let elapsedTimer = null;
+    let sseOk = false;
+
+    function nodeId(i) {
+      return (state.ids && state.ids[i]) || `N${i}`;
+    }
+
+    function clampInputs() {
+      let n = parseInt(nInput.value, 10);
+      if (Number.isNaN(n)) n = 8;
+      n = Math.min(100, Math.max(2, n));
+      nInput.value = String(n);
+      let t = parseFloat(intervalInput.value);
+      if (Number.isNaN(t)) t = 0.45;
+      t = Math.min(5, Math.max(0.05, t));
+      intervalInput.value = String(t);
+      fillSources(n);
+      return { n, t };
+    }
+
+    function fillSources(n) {
+      const curA = sourceA.value, curB = sourceB.value;
+      sourceA.innerHTML = '';
+      sourceB.innerHTML = '';
+      for (let i = 0; i < n; i++) {
+        for (const sel of [sourceA, sourceB]) {
+          const opt = document.createElement('option');
+          opt.value = i;
+          opt.textContent = nodeId(i);
+          sel.appendChild(opt);
+        }
+      }
+      sourceA.value = (curA !== '' && +curA < n) ? curA : '0';
+      sourceB.value = (curB !== '' && +curB < n && +curB !== +sourceA.value)
+        ? curB : String(Math.min(1, n - 1));
+      if (+sourceA.value === +sourceB.value && n > 1) {
+        sourceB.value = String((+sourceA.value + 1) % n);
+      }
+    }
+
+    nInput.addEventListener('change', clampInputs);
+    intervalInput.addEventListener('change', clampInputs);
+    clampInputs();
+
+    function setConnected(ok) {
+      $('status-dot').className = `h-2 w-2 rounded-full ${ok ? 'bg-pulse shadow animate-pulse' : 'bg-mist/40'}`;
+      $('status-text').textContent = ok ? 'flux temps réel' : 'déconnecté';
+    }
+    function showBootError(msg) {
+      const el = $('boot-error');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+    function hideBootError() { $('boot-error').classList.add('hidden'); }
+
+    function layout(n) {
+      const cx = 320, cy = 260;
+      const coreR = n > 48 ? 4 : n > 24 ? 6 : 11;
+      const r = Math.min(230, Math.max(90, (n * (coreR * 2 + 4)) / (2 * Math.PI)));
+      positions = [];
+      for (let i = 0; i < n; i++) {
+        const a = -Math.PI / 2 + (2 * Math.PI * i) / n;
+        positions.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), coreR });
+      }
+    }
+
+    function colorOf(val) {
+      if (val === 'rouge') return COLORS.rouge;
+      if (val === 'bleu') return COLORS.bleu;
+      return COLORS.none;
+    }
+
+    function renderNodes() {
+      const g = $('nodes');
+      g.innerHTML = '';
+      const n = state.n || 0;
+      const valeurs = state.valeurs || [];
+      const vcs = state.vcs || [];
+      const showLabels = n <= 36;
+      const showVc = n <= 12;
+      const puts = state.puts || {};
+
+      for (let i = 0; i < n; i++) {
+        const p = positions[i];
+        if (!p) continue;
+        const val = valeurs[i] ?? null;
+        const c = colorOf(val);
+        const coreR = p.coreR || 11;
+        const ringR = coreR + (n > 48 ? 2 : 8);
+        const isSource = Object.values(puts).some((x) => x.source === i);
+
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('transform', `translate(${p.x},${p.y})`);
+
+        if (isSource && state.conflict_at) {
+          const mark = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          mark.setAttribute('r', String(ringR + 6));
+          mark.setAttribute('fill', 'none');
+          mark.setAttribute('stroke', '#e8a838');
+          mark.setAttribute('stroke-width', '1.5');
+          mark.setAttribute('stroke-dasharray', '3 4');
+          mark.setAttribute('opacity', '0.85');
+          group.appendChild(mark);
+        }
+
+        const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        ring.setAttribute('r', String(ringR));
+        ring.setAttribute('class', 'node-ring');
+        ring.setAttribute('fill', 'none');
+        ring.setAttribute('stroke', c.stroke);
+        ring.setAttribute('stroke-width', val ? '2' : '1.5');
+        if (val && n <= 48) ring.setAttribute('filter', 'url(#glow)');
+
+        const core = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        core.setAttribute('r', String(val ? coreR + 1 : coreR));
+        core.setAttribute('class', 'node-core');
+        core.setAttribute('fill', c.fill);
+        core.setAttribute('stroke', c.stroke);
+        if (val && n <= 48) core.setAttribute('filter', 'url(#glow)');
+
+        group.appendChild(ring);
+        group.appendChild(core);
+
+        if (showLabels) {
+          const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          label.setAttribute('text-anchor', 'middle');
+          label.setAttribute('dominant-baseline', 'central');
+          label.setAttribute('fill', val ? '#0c0e14' : '#a8b0c0');
+          label.setAttribute('font-size', n > 24 ? '8' : '10');
+          label.setAttribute('font-family', 'IBM Plex Mono, monospace');
+          label.setAttribute('font-weight', '600');
+          label.textContent = nodeId(i);
+          group.appendChild(label);
+        }
+        if (showVc && vcs[i]) {
+          const vcLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          vcLabel.setAttribute('text-anchor', 'middle');
+          vcLabel.setAttribute('y', String(ringR + 12));
+          vcLabel.setAttribute('fill', '#a8b0c0');
+          vcLabel.setAttribute('font-size', '7');
+          vcLabel.setAttribute('font-family', 'IBM Plex Mono, monospace');
+          vcLabel.textContent = vcs[i];
+          group.appendChild(vcLabel);
+        }
+        g.appendChild(group);
+      }
+    }
+
+    function flashArc(from, to, useful, flipTo) {
+      const a = positions[from], b = positions[to];
+      if (!a || !b) return;
+      const stroke = useful
+        ? (flipTo === 'rouge' ? COLORS.rouge.arc : flipTo === 'bleu' ? COLORS.bleu.arc : '#e8a838')
+        : '#a8b0c055';
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+      line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+      line.setAttribute('class', 'arc-line');
+      line.setAttribute('stroke', stroke);
+      line.setAttribute('stroke-width', useful ? '2.2' : '1.2');
+      $('arcs').appendChild(line);
+      setTimeout(() => line.remove(), 700);
+      if (useful) {
+        const rip = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        rip.setAttribute('cx', b.x); rip.setAttribute('cy', b.y);
+        rip.setAttribute('class', 'ripple');
+        rip.setAttribute('stroke', stroke);
+        rip.setAttribute('r', '18');
+        $('ripples').appendChild(rip);
+        setTimeout(() => rip.remove(), 900);
+      }
+    }
+
+    function logLine(html, cls = '') {
+      const row = document.createElement('div');
+      row.className = `rounded-md px-2 py-1 ${cls || 'bg-ink-950/40 text-mist/70'}`;
+      row.innerHTML = html;
+      const box = $('log');
+      box.prepend(row);
+      while (box.children.length > 100) box.lastChild.remove();
+    }
+
+    function updateCounts(counts) {
+      if (!counts) return;
+      $('stat-rouge').textContent = counts.rouge ?? 0;
+      $('stat-bleu').textContent = counts.bleu ?? 0;
+    }
+
+    function styleAttendu(val) {
+      const el = $('stat-attendu');
+      if (!val) { el.textContent = '—'; el.className = 'mt-1 font-display text-xl text-mist/50'; return; }
+      el.textContent = val;
+      el.className = `mt-1 font-display text-xl ${val === 'rouge' ? 'text-rouge' : val === 'bleu' ? 'text-bleu' : 'text-white'}`;
+    }
+
+    function stopElapsedClock() {
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
+    function startElapsedClock() {
+      stopElapsedClock();
+      const localStart = state._localConflict || performance.now();
+      elapsedTimer = setInterval(() => {
+        if (state.converged_at) { stopElapsedClock(); return; }
+        $('stat-elapsed').textContent = ((performance.now() - localStart) / 1000).toFixed(2);
+      }, 50);
+    }
+
+    function applyState(ev) {
+      if (!ev || typeof ev !== 'object') return;
+      state = { ...state, ...ev };
+      if (ev.n != null && ev.n > 0) {
+        if (positions.length !== ev.n) layout(ev.n);
+        fillSources(ev.n);
+      }
+      renderNodes();
+      updateCounts(state.counts);
+      styleAttendu(state.attendu);
+      $('stat-relation').textContent = state.relation || '—';
+      $('stat-conflits').textContent = state.conflits_detectes ?? 0;
+
+      const running = !!state.running;
+      btnConflict.disabled = !running;
+      btnStop.disabled = !running;
+      btnStart.disabled = running;
+
+      if (state.converged_at && state.elapsed != null) {
+        stopElapsedClock();
+        $('stat-elapsed').textContent = Number(state.elapsed).toFixed(2);
+      } else if (!state.converged_at) {
+        $('banner').classList.add('translate-y-full');
+      }
+    }
+
+    function logConflictPuts(puts, meta = {}) {
+      for (const [val, info] of Object.entries(puts || {})) {
+        const cls = val === 'rouge' ? 'text-rouge' : 'text-bleu';
+        logLine(
+          `<span class="${cls}">put</span> couleur=<strong class="${cls}">${val}</strong> sur ` +
+          `<strong>${info.source_id || 'N'+info.source}</strong> ` +
+          `<span class="text-mist/40">vc=${info.vc}</span>`,
+          val === 'rouge' ? 'bg-rouge/10' : 'bg-bleu/10'
+        );
+      }
+      const rel = meta.relation || state.relation;
+      const attendu = meta.attendu || state.attendu;
+      const aCls = attendu === 'rouge' ? 'text-rouge' : 'text-bleu';
+      logLine(
+        `VC compare → <strong class="text-pulse">${rel || '?'}</strong>` +
+        (rel === 'concurrent' ? ' (vrai conflit)' : '') +
+        (attendu ? ` · vecteur max → <strong class="${aCls}">${attendu}</strong>` : ''),
+        'bg-pulse/10 text-pulse-soft'
+      );
+    }
+
+    function onEvent(ev) {
+      if (ev.type === 'started') {
+        logLine(`<span class="text-pulse">cluster</span> N=${ev.n} · T=${ev.interval}s · ids ${(ev.ids||[]).join(',')}`, 'bg-pulse/10 text-pulse-soft');
+        stopElapsedClock();
+        applyState({
+          n: ev.n, interval: ev.interval, running: true, ids: ev.ids || [],
+          valeurs: [], vcs: [], counts: { rouge: 0, bleu: 0, none: ev.n },
+          conflict_at: null, converged_at: null, puts: {}, attendu: null, relation: null,
+          conflits_detectes: 0, elapsed: null,
+        });
+        return;
+      }
+      if (ev.type === 'stopped') {
+        logLine(`<span class="text-mist/50">cluster arrêté</span>`);
+        stopElapsedClock();
+        applyState({ n: 0, valeurs: [], running: false, conflict_at: null, converged_at: null, puts: {}, attendu: null, relation: null });
+        layout(8); renderNodes();
+        return;
+      }
+      if (ev.type === 'state') { applyState(ev); return; }
+      if (ev.type === 'conflict') {
+        state._localConflict = performance.now();
+        state.conflict_at = true;
+        state.converged_at = null;
+        state.puts = ev.puts;
+        state.attendu = ev.attendu;
+        state.relation = ev.relation;
+        styleAttendu(ev.attendu);
+        $('stat-relation').textContent = ev.relation || '—';
+        startElapsedClock();
+        $('banner').classList.add('translate-y-full');
+        return;
+      }
+      if (ev.type === 'gossip') {
+        const useful = (ev.maj_peer || 0) + (ev.maj_local || 0) > 0;
+        const conflictEv = (ev.events || []).find((e) => e.kind === 'conflict');
+        flashArc(ev.from, ev.to, useful, conflictEv ? conflictEv.to : null);
+        if (ev.valeurs) { state.valeurs = ev.valeurs; state.vcs = ev.vcs || state.vcs; renderNodes(); }
+        for (const e of (ev.events || [])) {
+          if (e.kind === 'conflict') {
+            const toCls = e.to === 'rouge' ? 'text-rouge' : 'text-bleu';
+            const fromCls = e.from === 'rouge' ? 'text-rouge' : 'text-bleu';
+            logLine(
+              `<span class="text-pulse">CONFLIT</span> sur ${e.node_id} : ` +
+              `<span class="${fromCls}">${e.from}</span> vs … → <span class="${toCls}">${e.to}</span> gagne` +
+              ` <span class="text-mist/40">vc=${e.vc}</span>`,
+              'bg-pulse/15 text-pulse-soft'
+            );
+          } else if (e.kind === 'dominates' || e.kind === 'new') {
+            const toCls = e.to === 'rouge' ? 'text-rouge' : e.to === 'bleu' ? 'text-bleu' : '';
+            logLine(
+              `<span class="text-mist/50">merge</span> ${e.node_id} ← <span class="${toCls}">${e.to}</span>` +
+              (e.vc ? ` <span class="text-mist/40">${e.vc}</span>` : '')
+            );
+          }
+        }
+        return;
+      }
+      if (ev.type === 'converged') {
+        state.converged_at = true;
+        stopElapsedClock();
+        $('stat-elapsed').textContent = Number(ev.elapsed).toFixed(2);
+        $('stat-conflits').textContent = ev.conflits_detectes ?? 0;
+        styleAttendu(ev.attendu);
+        const gCls = ev.gagnant === 'rouge' ? 'text-rouge' : 'text-bleu';
+        $('banner').classList.remove('translate-y-full');
+        $('banner-detail').innerHTML =
+          `Tous ont <span class="${gCls}">${ev.gagnant}</span>` +
+          (ev.perdant ? ` · <span class="opacity-70">${ev.perdant}</span> absorbé` : '') +
+          ` · ${Number(ev.elapsed).toFixed(2)}s · ${ev.conflits_detectes || 0} conflit(s) détecté(s)`;
+        logLine(
+          `<span class="${gCls}">convergé</span> sur <strong class="${gCls}">${ev.gagnant}</strong>` +
+          ` — ${ev.conflits_detectes || 0} conflit(s) détecté(s) (${Number(ev.elapsed).toFixed(2)}s)`,
+          ev.gagnant === 'rouge' ? 'bg-rouge/15' : 'bg-bleu/15'
+        );
+      }
+    }
+
+    async function post(url, body) {
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body || {}),
+        });
+      } catch (_) {
+        throw new Error('Serveur injoignable. Lance : python visu_lww.py → http://127.0.0.1:8767');
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    btnStart.addEventListener('click', async () => {
+      btnStart.disabled = true;
+      try {
+        hideBootError();
+        const { n, t } = clampInputs();
+        const data = await post('/api/start', { n, interval: t });
+        if (data.state) applyState(data.state);
+        logLine(`<span class="text-pulse">cluster</span> N=${n} · T=${t}s`, 'bg-pulse/10 text-pulse-soft');
+      } catch (e) {
+        btnStart.disabled = false;
+        showBootError(e.message);
+        logLine(`<span class="text-red-400">erreur</span> ${e.message}`, 'bg-red-500/10');
+      }
+    });
+
+    btnConflict.addEventListener('click', async () => {
+      try {
+        const sa = +sourceA.value, sb = +sourceB.value;
+        if (sa === sb) throw new Error('Choisis deux sources distinctes');
+        const data = await post('/api/conflict', {
+          source_a: sa, source_b: sb, value_a: 'rouge', value_b: 'bleu',
+        });
+        state._localConflict = performance.now();
+        if (data.state) {
+          applyState(data.state);
+          logConflictPuts(data.state.puts, {
+            relation: data.state.relation,
+            attendu: data.state.attendu,
+          });
+          startElapsedClock();
+        }
+      } catch (e) {
+        showBootError(e.message);
+        logLine(`<span class="text-red-400">erreur</span> ${e.message}`, 'bg-red-500/10');
+      }
+    });
+
+    btnStop.addEventListener('click', async () => {
+      try {
+        const data = await post('/api/stop', {});
+        if (data.state) applyState(data.state);
+        stopElapsedClock();
+        logLine(`<span class="text-mist/50">cluster arrêté</span>`);
+      } catch (e) {
+        showBootError(e.message);
+        logLine(`<span class="text-red-400">erreur</span> ${e.message}`, 'bg-red-500/10');
+      }
+    });
+
+    function connectSSE() {
+      if (location.protocol === 'file:') return;
+      const es = new EventSource('/events');
+      es.onopen = () => { sseOk = true; setConnected(true); hideBootError(); };
+      es.onerror = () => { sseOk = false; setConnected(false); };
+      es.onmessage = (msg) => {
+        sseOk = true;
+        try { onEvent(JSON.parse(msg.data)); } catch (_) {}
+      };
+    }
+
+    setInterval(async () => {
+      if (location.protocol === 'file:' || sseOk) return;
+      try {
+        const res = await fetch('/api/state');
+        if (!res.ok) return;
+        applyState(await res.json());
+        setConnected(true);
+      } catch (_) { setConnected(false); }
+    }, 1500);
+
+    if (location.protocol === 'file:') {
+      showBootError('Ouvre via python visu_lww.py → http://127.0.0.1:8767');
+    } else {
+      connectSSE();
+    }
+    layout(8);
+    state.n = 0;
+    renderNodes();
+  </script>
+</body>
+</html>
